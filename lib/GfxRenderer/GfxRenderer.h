@@ -39,10 +39,10 @@ class GfxRenderer {
   explicit GfxRenderer(HalDisplay& halDisplay) : display(halDisplay), renderMode(BW), orientation(Portrait) {}
   ~GfxRenderer() { freeBwBufferChunks(); }
 
-  static constexpr int VIEWABLE_MARGIN_TOP = 9;
-  static constexpr int VIEWABLE_MARGIN_RIGHT = 3;
-  static constexpr int VIEWABLE_MARGIN_BOTTOM = 3;
-  static constexpr int VIEWABLE_MARGIN_LEFT = 3;
+  static constexpr int VIEWABLE_MARGIN_TOP = 5;
+  static constexpr int VIEWABLE_MARGIN_RIGHT = 2;
+  static constexpr int VIEWABLE_MARGIN_BOTTOM = 5;
+  static constexpr int VIEWABLE_MARGIN_LEFT = 1;
 
   // Setup
   void insertFont(int fontId, EpdFontFamily font);
