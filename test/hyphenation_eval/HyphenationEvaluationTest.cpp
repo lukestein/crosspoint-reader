@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "lib/Epub/Epub/hyphenation/HyphenationCommon.h"
+#include "lib/Epub/Epub/hyphenation/Hyphenator.h"
 #include "lib/Epub/Epub/hyphenation/LanguageHyphenator.h"
 #include "lib/Epub/Epub/hyphenation/LanguageRegistry.h"
 
@@ -302,9 +303,149 @@ void printResults(const std::string& language, const std::vector<TestCase>& test
   }
 }
 
+// Unit tests for Hyphenator::breakOffsets, specifically verifying em dash adjacent to quotation marks.
+int runExplicitBreakUnitTests() {
+  Hyphenator::setPreferredLanguage("");  // No language hyphenation
+
+  struct BreakTest {
+    std::string description;
+    std::string word;
+    std::vector<size_t> expectedByteOffsets;  // Expected break byte offsets (empty = no breaks expected)
+  };
+
+  // UTF-8 encoded characters:
+  //   em dash U+2014  = \xE2\x80\x94 (3 bytes)
+  //   "       U+201C  = \xE2\x80\x9C (3 bytes)
+  //   "       U+201D  = \xE2\x80\x9D (3 bytes)
+  //   '       U+2018  = \xE2\x80\x98 (3 bytes)
+  //   '       U+2019  = \xE2\x80\x99 (3 bytes)
+  const std::string emDash = "\xE2\x80\x94";
+  const std::string ldq = "\xE2\x80\x9C";  // left double quote "
+  const std::string rdq = "\xE2\x80\x9D";  // right double quote "
+  const std::string lsq = "\xE2\x80\x98";  // left single quote '
+  const std::string rsq = "\xE2\x80\x99";  // right single quote '
+
+  const std::vector<BreakTest> tests = {
+      // From the issue: "course"—Fischer" — break after em dash before 'F'
+      {"em dash between right-double-quote and letter",
+       "course" + rdq + emDash + "Fischer",
+       {6 + 3 + 3}},  // byte offset of 'F' = 6(course) + 3(rdq) + 3(emdash)
+
+      // From the issue: "hat—"upset" — break after em dash before the left double quote
+      {"em dash between letter and left-double-quote",
+       "hat" + emDash + ldq + "upset",
+       {3 + 3}},  // byte offset of ldq = 3(hat) + 3(emdash)
+
+      // Standalone token: "—Fischer (leading right-double-quote trimmed by caller)
+      {"em dash between left-double-quote and letter",
+       ldq + emDash + "Fischer",
+       {3 + 3}},  // byte offset of 'F' = 3(ldq) + 3(emdash)
+
+      // Standalone token: hat—" (trailing left-double-quote)
+      {"em dash between letter and right-double-quote",
+       "hat" + emDash + rdq,
+       {3 + 3}},  // byte offset of rdq = 3(hat) + 3(emdash)
+
+      // Straight double quote variants
+      {"em dash between straight-double-quote and letter", "\"" + emDash + "Fischer", {1 + 3}},
+      {"em dash between letter and straight-double-quote", "hat" + emDash + "\"", {3 + 3}},
+
+      // Single quote variants
+      {"em dash between right-single-quote and letter", rsq + emDash + "Fischer", {3 + 3}},
+      {"em dash between letter and left-single-quote", "hat" + emDash + lsq, {3 + 3}},
+
+      // Existing behavior: em dash between two letters should still work
+      {"em dash between two letters", "hello" + emDash + "world", {5 + 3}},
+
+      // Should NOT produce a break: em dash between two quotation marks (no alphabetic neighbor)
+      {"em dash between two quotation marks — no break", rdq + emDash + ldq, {}},
+
+      // Should NOT produce a break: em dash at start with nothing before but WITH an alphabetic
+      // next character — now correctly produces a break after the leading dash (for continuation tokens).
+      {"em dash followed by letter — break after leading dash",
+       emDash + "Fischer",
+       {3}},  // break at 'F' = byte 3 (em dash is 3 bytes)
+
+      // piss-effin'-poor: hyphen between apostrophe and letter should allow break after the hyphen.
+      // As a single token the break is after the dash (before 'p' in 'poor').
+      {"hyphen after apostrophe in compound word (single token, straight apostrophe)",
+       "piss-effin'-poor",
+       {5, 12}},  // break at 'e' (effin') and at 'p' (poor)
+
+      {"hyphen after apostrophe — remainder fragment (straight apostrophe)",
+       "effin'-poor",
+       {7}},  // break at 'p' in 'poor' (after "effin'-")
+
+      // With curly apostrophe (U+2019 = 3 bytes)
+      {"hyphen after curly apostrophe — remainder fragment",
+       "effin\xE2\x80\x99-poor",
+       {9}},  // break at 'p' (after "effin'-", where ' is 3 bytes)
+
+      // Continuation token sub-words: individual tokens that inline markup may produce.
+      // Leading-hyphen tokens now produce a break right after the hyphen.
+      {"continuation token ending with apostrophe — no break alone", "effin'", {}},
+      {"continuation token starting with hyphen — break after leading hyphen", "-poor", {1}},
+
+      // "President"—Jacob split by inline markup: ["President"] + ["—Jacob"] as continuation.
+      // The "—Jacob" token must produce a break at byte 3 (after the em dash, before 'J').
+      {"em dash continuation token —Jacob: break after leading dash",
+       emDash + "Jacob",
+       {3}},  // byte offset of 'J' = 3 (em dash is 3 bytes)
+
+      // Curly-quote variant: —"word (leading em dash, then opening quote, then letters)
+      {"em dash followed by opening quote and letters",
+       emDash + ldq + "word",
+       {3}},  // break after dash, before the opening quote
+
+      // Should NOT produce a break: leading em dash with no alphabetic/quote after
+      {"leading em dash with no text after — no break", emDash, {}},
+      {"leading em dash followed by another dash — no break", emDash + emDash, {}},
+  };
+
+  int passed = 0;
+  int failed = 0;
+
+  for (const auto& test : tests) {
+    auto breaks = Hyphenator::breakOffsets(test.word, false);
+    std::vector<size_t> actualOffsets;
+    for (const auto& b : breaks) {
+      actualOffsets.push_back(b.byteOffset);
+    }
+
+    bool ok = (actualOffsets == test.expectedByteOffsets);
+    if (ok) {
+      ++passed;
+      std::cout << "  PASS: " << test.description << std::endl;
+    } else {
+      ++failed;
+      std::cout << "  FAIL: " << test.description << std::endl;
+      std::cout << "    word:     " << test.word << std::endl;
+      std::cout << "    expected offsets: [";
+      for (size_t i = 0; i < test.expectedByteOffsets.size(); ++i) {
+        if (i) std::cout << ", ";
+        std::cout << test.expectedByteOffsets[i];
+      }
+      std::cout << "]" << std::endl;
+      std::cout << "    actual offsets:   [";
+      for (size_t i = 0; i < actualOffsets.size(); ++i) {
+        if (i) std::cout << ", ";
+        std::cout << actualOffsets[i];
+      }
+      std::cout << "]" << std::endl;
+    }
+  }
+
+  std::cout << std::endl << "Unit test results: " << passed << " passed, " << failed << " failed." << std::endl;
+  return failed > 0 ? 1 : 0;
+}
+
 int main(int argc, char* argv[]) {
   const bool summaryMode = argc <= 1;
   const std::string languageSelection = summaryMode ? "all" : argv[1];
+
+  if (languageSelection == "unit_tests") {
+    return runExplicitBreakUnitTests();
+  }
 
   std::vector<LanguageConfig> languages = resolveLanguages(languageSelection);
   if (languages.empty()) {
