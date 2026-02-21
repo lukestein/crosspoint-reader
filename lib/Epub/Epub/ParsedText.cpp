@@ -297,35 +297,41 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
       // merge it with its predecessor and retry hyphenation on the combined token.
       // Note: only ASCII hyphen-minus (U+002D) is handled here; other Unicode dash variants
       // are rare as leading characters of continuation tokens in practice.
-      if (!isFirstWord && continuesVec[currentIndex] && !words[currentIndex].empty() &&
-          words[currentIndex][0] == '-') {
-        const size_t prevIdx = currentIndex - 1;
-        const std::string savedPrev = words[prevIdx];
-        const uint16_t savedPrevWidth = wordWidths[prevIdx];
-        words[prevIdx] += words[currentIndex];
-        wordWidths[prevIdx] = measureWordWidth(renderer, fontId, words[prevIdx], wordStyles[prevIdx]);
+      if (!isFirstWord && continuesVec[currentIndex] && !words.empty()) {
+        auto curWordIt = std::next(words.begin(), currentIndex);
+        if (!curWordIt->empty() && (*curWordIt)[0] == '-') {
+          const size_t prevIdx = currentIndex - 1;
+          auto prevWordIt = std::next(words.begin(), prevIdx);
+          auto prevStyleIt = std::next(wordStyles.begin(), prevIdx);
+          const std::string savedPrev = *prevWordIt;
+          const uint16_t savedPrevWidth = wordWidths[prevIdx];
+          *prevWordIt += *curWordIt;
+          wordWidths[prevIdx] = measureWordWidth(renderer, fontId, *prevWordIt, *prevStyleIt);
 
-        const int combinedAvail = effectivePageWidth - (lineWidth - savedPrevWidth);
-        if (combinedAvail > 0 && hyphenateWordAtIndex(prevIdx, combinedAvail, renderer, fontId, wordWidths,
-                                                      false, &continuesVec)) {
-          // Split succeeded. words[prevIdx] is the prefix; words[prevIdx+1] is the remainder.
-          // hyphenateWordAtIndex inserted the remainder at prevIdx+1, shifting the original
-          // continuation word to prevIdx+2 (= redundantIdx). Remove it now.
-          const size_t remainderIdx = prevIdx + 1;
-          const size_t redundantIdx = remainderIdx + 1;
-          // Preserve the style of the original continuation word for the split remainder.
-          wordStyles[remainderIdx] = wordStyles[redundantIdx];
-          words.erase(words.begin() + redundantIdx);
-          wordWidths.erase(wordWidths.begin() + redundantIdx);
-          continuesVec.erase(continuesVec.begin() + redundantIdx);
-          wordStyles.erase(wordStyles.begin() + redundantIdx);
-          wordContinues.erase(wordContinues.begin() + redundantIdx);
-          lineWidth = lineWidth - savedPrevWidth + wordWidths[prevIdx];
-          currentIndex = prevIdx + 1;
-          break;
-        } else {
-          words[prevIdx] = savedPrev;
-          wordWidths[prevIdx] = savedPrevWidth;
+          const int combinedAvail = effectivePageWidth - (lineWidth - savedPrevWidth);
+          if (combinedAvail > 0 && hyphenateWordAtIndex(prevIdx, combinedAvail, renderer, fontId, wordWidths,
+                                                        false, &continuesVec)) {
+            // Split succeeded. words[prevIdx] is the prefix; words[prevIdx+1] is the remainder.
+            // hyphenateWordAtIndex inserted the remainder at prevIdx+1, shifting the original
+            // continuation word to prevIdx+2 (= redundantIdx). Remove it now.
+            const size_t remainderIdx = prevIdx + 1;
+            const size_t redundantIdx = remainderIdx + 1;
+            // Preserve the style of the original continuation word for the split remainder.
+            auto remainderStyleIt = std::next(wordStyles.begin(), remainderIdx);
+            auto redundantStyleIt = std::next(wordStyles.begin(), redundantIdx);
+            *remainderStyleIt = *redundantStyleIt;
+            words.erase(std::next(words.begin(), redundantIdx));
+            wordWidths.erase(wordWidths.begin() + redundantIdx);
+            continuesVec.erase(continuesVec.begin() + redundantIdx);
+            wordStyles.erase(redundantStyleIt);
+            wordContinues.erase(std::next(wordContinues.begin(), redundantIdx));
+            lineWidth = lineWidth - savedPrevWidth + wordWidths[prevIdx];
+            currentIndex = prevIdx + 1;
+            break;
+          } else {
+            *prevWordIt = savedPrev;
+            wordWidths[prevIdx] = savedPrevWidth;
+          }
         }
       }
 
