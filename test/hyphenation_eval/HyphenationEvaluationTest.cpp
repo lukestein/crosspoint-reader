@@ -362,6 +362,26 @@ int runExplicitBreakUnitTests() {
 
       // Should NOT produce a break: em dash at start (i=0, no left neighbor)
       {"em dash followed only by letter with nothing before", emDash + "Fischer", {}},
+
+      // piss-effin'-poor: hyphen between apostrophe and letter should allow break after the hyphen.
+      // As a single token the break is after the dash (before 'p' in 'poor').
+      {"hyphen after apostrophe in compound word (single token, straight apostrophe)",
+       "piss-effin'-poor",
+       {5, 12}},  // break at 'e' (effin') and at 'p' (poor)
+
+      {"hyphen after apostrophe — remainder fragment (straight apostrophe)",
+       "effin'-poor",
+       {7}},  // break at 'p' in 'poor' (after "effin'-")
+
+      // With curly apostrophe (U+2019 = 3 bytes)
+      {"hyphen after curly apostrophe — remainder fragment",
+       "effin\xE2\x80\x99-poor",
+       {9}},  // break at 'p' (after "effin'-", where ' is 3 bytes)
+
+      // Continuation token sub-words: individual tokens that inline markup may produce.
+      // These have no break on their own; the layout engine must merge them.
+      {"continuation token ending with apostrophe — no break alone", "effin'", {}},
+      {"continuation token starting with hyphen — no break alone", "-poor", {}},
   };
 
   int passed = 0;

@@ -292,6 +292,43 @@ std::vector<size_t> ParsedText::computeHyphenatedLineBreaks(const GfxRenderer& r
         break;
       }
 
+      // If the overflowing word is a continuation that starts with an ASCII hyphen-minus
+      // (e.g., "-poor" following "effin'" due to inline markup splitting a compound word),
+      // merge it with its predecessor and retry hyphenation on the combined token.
+      // Note: only ASCII hyphen-minus (U+002D) is handled here; other Unicode dash variants
+      // are rare as leading characters of continuation tokens in practice.
+      if (!isFirstWord && continuesVec[currentIndex] && !words[currentIndex].empty() &&
+          words[currentIndex][0] == '-') {
+        const size_t prevIdx = currentIndex - 1;
+        const std::string savedPrev = words[prevIdx];
+        const uint16_t savedPrevWidth = wordWidths[prevIdx];
+        words[prevIdx] += words[currentIndex];
+        wordWidths[prevIdx] = measureWordWidth(renderer, fontId, words[prevIdx], wordStyles[prevIdx]);
+
+        const int combinedAvail = effectivePageWidth - (lineWidth - savedPrevWidth);
+        if (combinedAvail > 0 && hyphenateWordAtIndex(prevIdx, combinedAvail, renderer, fontId, wordWidths,
+                                                      false, &continuesVec)) {
+          // Split succeeded. words[prevIdx] is the prefix; words[prevIdx+1] is the remainder.
+          // hyphenateWordAtIndex inserted the remainder at prevIdx+1, shifting the original
+          // continuation word to prevIdx+2 (= redundantIdx). Remove it now.
+          const size_t remainderIdx = prevIdx + 1;
+          const size_t redundantIdx = remainderIdx + 1;
+          // Preserve the style of the original continuation word for the split remainder.
+          wordStyles[remainderIdx] = wordStyles[redundantIdx];
+          words.erase(words.begin() + redundantIdx);
+          wordWidths.erase(wordWidths.begin() + redundantIdx);
+          continuesVec.erase(continuesVec.begin() + redundantIdx);
+          wordStyles.erase(wordStyles.begin() + redundantIdx);
+          wordContinues.erase(wordContinues.begin() + redundantIdx);
+          lineWidth = lineWidth - savedPrevWidth + wordWidths[prevIdx];
+          currentIndex = prevIdx + 1;
+          break;
+        } else {
+          words[prevIdx] = savedPrev;
+          wordWidths[prevIdx] = savedPrevWidth;
+        }
+      }
+
       // Could not split: force at least one word per line to avoid infinite loop
       if (currentIndex == lineStart) {
         lineWidth += candidateWidth;
@@ -378,20 +415,16 @@ bool ParsedText::hyphenateWordAtIndex(const size_t wordIndex, const int availabl
   words.insert(insertWordIt, remainder);
   wordStyles.insert(insertStyleIt, style);
 
-  // The remainder inherits whatever continuation status the original word had with the word after it.
-  // Find the continues entry for the original word and insert the remainder's entry after it.
+  // The prefix retains its original attachment to its predecessor (unchanged).
+  // The remainder begins on the next line and must not attach to the prefix.
   auto continuesIt = wordContinues.begin();
   std::advance(continuesIt, wordIndex);
-  const bool originalContinuedToNext = *continuesIt;
-  // The original word (now prefix) does NOT continue to remainder (hyphen separates them)
-  *continuesIt = false;
   const auto insertContinuesIt = std::next(continuesIt);
-  wordContinues.insert(insertContinuesIt, originalContinuedToNext);
+  wordContinues.insert(insertContinuesIt, false);
 
   // Keep the indexed vector in sync if provided
   if (continuesVec) {
-    (*continuesVec)[wordIndex] = false;
-    continuesVec->insert(continuesVec->begin() + wordIndex + 1, originalContinuedToNext);
+    continuesVec->insert(continuesVec->begin() + wordIndex + 1, false);
   }
 
   // Update cached widths to reflect the new prefix/remainder pairing.
