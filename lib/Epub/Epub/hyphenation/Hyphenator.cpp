@@ -35,10 +35,19 @@ size_t byteOffsetForIndex(const std::vector<CodepointInfo>& cps, const size_t in
 std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<CodepointInfo>& cps) {
   std::vector<Hyphenator::BreakInfo> breaks;
 
-  // Scan every codepoint looking for explicit/soft hyphen markers that are surrounded by letters.
+  // Scan every codepoint looking for explicit/soft hyphen markers surrounded by letters or quotation
+  // marks, with at least one alphabetic neighbor (e.g., allows breaks around em dashes adjacent to
+  // quotation marks such as in hat—"word or word"—Fischer patterns).
   for (size_t i = 1; i + 1 < cps.size(); ++i) {
     const uint32_t cp = cps[i].value;
-    if (!isExplicitHyphen(cp) || !isAlphabetic(cps[i - 1].value) || !isAlphabetic(cps[i + 1].value)) {
+    if (!isExplicitHyphen(cp)) {
+      continue;
+    }
+    const bool prevAlpha = isAlphabetic(cps[i - 1].value);
+    const bool nextAlpha = isAlphabetic(cps[i + 1].value);
+    const bool prevOk = prevAlpha || isQuotationMark(cps[i - 1].value);
+    const bool nextOk = nextAlpha || isQuotationMark(cps[i + 1].value);
+    if (!prevOk || !nextOk || (!prevAlpha && !nextAlpha)) {
       continue;
     }
     // Offset points to the next codepoint so rendering starts after the hyphen marker.
@@ -57,14 +66,16 @@ std::vector<Hyphenator::BreakInfo> Hyphenator::breakOffsets(const std::string& w
 
   // Convert to codepoints and normalize word boundaries.
   auto cps = collectCodepoints(word);
-  trimSurroundingPunctuationAndFootnote(cps);
-  const auto* hyphenator = cachedHyphenator_;
 
-  // Explicit hyphen markers (soft or hard) take precedence over language breaks.
+  // Explicit hyphen markers take precedence over language breaks and are checked before trimming
+  // so that em dashes adjacent to quotation marks (which trimming would otherwise remove) are found.
   auto explicitBreakInfos = buildExplicitBreakInfos(cps);
   if (!explicitBreakInfos.empty()) {
     return explicitBreakInfos;
   }
+
+  trimSurroundingPunctuationAndFootnote(cps);
+  const auto* hyphenator = cachedHyphenator_;
 
   // Ask language hyphenator for legal break points.
   std::vector<size_t> indexes;
