@@ -35,7 +35,18 @@ size_t byteOffsetForIndex(const std::vector<CodepointInfo>& cps, const size_t in
 std::vector<Hyphenator::BreakInfo> buildExplicitBreakInfos(const std::vector<CodepointInfo>& cps) {
   std::vector<Hyphenator::BreakInfo> breaks;
 
-  // Scan every codepoint looking for explicit/soft hyphen markers surrounded by letters or quotation
+  // Special case: leading explicit (non-soft) hyphen at position 0.
+  // This handles continuation tokens such as "—Jacob" produced when inline markup splits
+  // a passage like "President"—Jacob into ["President"] + ["—Jacob"]. A break is allowed
+  // immediately after the leading dash when the next character is a letter or quotation mark.
+  if (cps.size() >= 2 && isExplicitHyphen(cps[0].value) && !isSoftHyphen(cps[0].value)) {
+    const bool nextOk = isAlphabetic(cps[1].value) || isQuotationMark(cps[1].value);
+    if (nextOk) {
+      breaks.push_back({cps[1].byteOffset, false});
+    }
+  }
+
+  // Scan interior positions for explicit/soft hyphen markers surrounded by letters or quotation
   // marks, with at least one alphabetic neighbor (e.g., allows breaks around em dashes adjacent to
   // quotation marks such as in hat—"word or word"—Fischer patterns).
   for (size_t i = 1; i + 1 < cps.size(); ++i) {

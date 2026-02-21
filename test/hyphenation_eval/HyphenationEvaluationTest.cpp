@@ -360,8 +360,11 @@ int runExplicitBreakUnitTests() {
       // Should NOT produce a break: em dash between two quotation marks (no alphabetic neighbor)
       {"em dash between two quotation marks — no break", rdq + emDash + ldq, {}},
 
-      // Should NOT produce a break: em dash at start (i=0, no left neighbor)
-      {"em dash followed only by letter with nothing before", emDash + "Fischer", {}},
+      // Should NOT produce a break: em dash at start with nothing before but WITH an alphabetic
+      // next character — now correctly produces a break after the leading dash (for continuation tokens).
+      {"em dash followed by letter — break after leading dash",
+       emDash + "Fischer",
+       {3}},  // break at 'F' = byte 3 (em dash is 3 bytes)
 
       // piss-effin'-poor: hyphen between apostrophe and letter should allow break after the hyphen.
       // As a single token the break is after the dash (before 'p' in 'poor').
@@ -379,9 +382,24 @@ int runExplicitBreakUnitTests() {
        {9}},  // break at 'p' (after "effin'-", where ' is 3 bytes)
 
       // Continuation token sub-words: individual tokens that inline markup may produce.
-      // These have no break on their own; the layout engine must merge them.
+      // Leading-hyphen tokens now produce a break right after the hyphen.
       {"continuation token ending with apostrophe — no break alone", "effin'", {}},
-      {"continuation token starting with hyphen — no break alone", "-poor", {}},
+      {"continuation token starting with hyphen — break after leading hyphen", "-poor", {1}},
+
+      // "President"—Jacob split by inline markup: ["President"] + ["—Jacob"] as continuation.
+      // The "—Jacob" token must produce a break at byte 3 (after the em dash, before 'J').
+      {"em dash continuation token —Jacob: break after leading dash",
+       emDash + "Jacob",
+       {3}},  // byte offset of 'J' = 3 (em dash is 3 bytes)
+
+      // Curly-quote variant: —"word (leading em dash, then opening quote, then letters)
+      {"em dash followed by opening quote and letters",
+       emDash + ldq + "word",
+       {3}},  // break after dash, before the opening quote
+
+      // Should NOT produce a break: leading em dash with no alphabetic/quote after
+      {"leading em dash with no text after — no break", emDash, {}},
+      {"leading em dash followed by another dash — no break", emDash + emDash, {}},
   };
 
   int passed = 0;
